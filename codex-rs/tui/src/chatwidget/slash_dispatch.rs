@@ -434,10 +434,13 @@ impl ChatWidget {
                     },
                 );
             }
+            // [ACX]
+            SlashCommand::AcxStop => {
+                self.app_event_tx.send(AppEvent::AcxStopRequested);
+            }
+            // [/ACX]
         }
-    }
-
-    /// Run an inline slash command.
+    }    /// Run an inline slash command.
     ///
     /// Branches that prepare arguments should pass `record_history: false` to the composer because
     /// the staged slash-command entry is the recall record; using the normal submission-history
@@ -843,6 +846,7 @@ impl ChatWidget {
             | SlashCommand::Copy
             | SlashCommand::Diff
             | SlashCommand::Rename
+            | SlashCommand::AcxStop
             | SlashCommand::TestApproval => QueueDrain::Continue,
             SlashCommand::Feedback
             | SlashCommand::New

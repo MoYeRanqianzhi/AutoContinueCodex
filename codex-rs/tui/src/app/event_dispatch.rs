@@ -1736,6 +1736,17 @@ impl App {
                     }
                 }
             }
+            // [ACX] 处理用户请求停止 AutoContinue
+            AppEvent::AcxStopRequested => {
+                if let Some(ref mut mgr) = self.acx_manager {
+                    mgr.request_stop();
+                    self.chat_widget.add_info_message(
+                        "[ACX] 自动继续已停止，当前轮完成后不再继续".to_string(),
+                        None,
+                    );
+                }
+            }
+            // [/ACX]
         }
         Ok(AppRunControl::Continue)
     }

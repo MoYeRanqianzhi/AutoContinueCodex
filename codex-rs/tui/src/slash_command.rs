@@ -69,6 +69,10 @@ pub enum SlashCommand {
     MemoryDrop,
     #[strum(serialize = "debug-m-update")]
     MemoryUpdate,
+    // [ACX]
+    #[strum(serialize = "acx-stop")]
+    AcxStop,
+    // [/ACX]
 }
 
 impl SlashCommand {
@@ -99,6 +103,7 @@ impl SlashCommand {
             SlashCommand::Stop => "stop all background terminals",
             SlashCommand::MemoryDrop => "DO NOT USE",
             SlashCommand::MemoryUpdate => "DO NOT USE",
+            SlashCommand::AcxStop => "stop auto-continue after current turn", // [ACX]
             SlashCommand::Model => "choose what model and reasoning effort to use",
             SlashCommand::Fast => {
                 "toggle Fast mode to enable fastest inference with increased plan usage"
@@ -207,6 +212,7 @@ impl SlashCommand {
             SlashCommand::Settings => true,
             SlashCommand::Collab => true,
             SlashCommand::Agent | SlashCommand::MultiAgents => true,
+            SlashCommand::AcxStop => true, // [ACX]
             SlashCommand::Statusline => false,
             SlashCommand::Theme => false,
             SlashCommand::Title => false,

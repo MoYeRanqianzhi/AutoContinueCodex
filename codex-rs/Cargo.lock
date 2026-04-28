@@ -2030,6 +2030,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "codex-auto-continue"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "codex-aws-auth"
 version = "0.0.0"
 dependencies = [
@@ -3472,6 +3481,7 @@ dependencies = [
  "codex-app-server-client",
  "codex-app-server-protocol",
  "codex-arg0",
+ "codex-auto-continue",
  "codex-chatgpt",
  "codex-cli",
  "codex-cloud-requirements",
