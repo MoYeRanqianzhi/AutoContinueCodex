@@ -1,0 +1,141 @@
+# ACX Release — 构建 + npm 发布
+# 触发方式：推送 acx-v*.*.* tag
+name: acx-release
+
+on:
+  push:
+    tags:
+      - "acx-v*.*.*"
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
+jobs:
+  tag-check:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.extract.outputs.version }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - name: Validate tag matches Cargo.toml version
+        id: extract
+        run: |
+          set -euo pipefail
+          tag_ver="${GITHUB_REF_NAME#acx-v}"
+          cargo_ver="$(grep -m1 '^version' codex-rs/Cargo.toml \
+                        | sed -E 's/version *= *"([^"]+)".*/\1/')"
+          if [[ "${tag_ver}" != "${cargo_ver}" ]]; then
+            echo "Tag ${tag_ver} != Cargo.toml ${cargo_ver}"
+            exit 1
+          fi
+          echo "version=${tag_ver}" >> "$GITHUB_OUTPUT"
+          echo "Version: ${tag_ver}"
+
+  build:
+    needs: tag-check
+    name: Build - ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+          - runner: macos-15-xlarge
+            target: aarch64-apple-darwin
+          - runner: macos-15-large
+            target: x86_64-apple-darwin
+          - runner: windows-latest
+            target: x86_64-pc-windows-msvc
+          - runner: windows-11-arm
+            target: aarch64-pc-windows-msvc
+    defaults:
+      run:
+        working-directory: codex-rs
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -y
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends pkg-config libcap-dev
+
+      - uses: dtolnay/rust-toolchain@a0b273b48ed29de4470960879e8381ff45632f26 # 1.93.0
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install musl tools (Linux x86_64)
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: sudo apt-get install -y musl-tools
+
+      - name: Build release binaries
+        run: cargo build --release --target ${{ matrix.target }} -p codex-cli -p codex-tui
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
+        with:
+          name: binaries-${{ matrix.target }}
+          path: |
+            codex-rs/target/${{ matrix.target }}/release/codex
+            codex-rs/target/${{ matrix.target }}/release/codex.exe
+
+  package-npm:
+    needs: [tag-check, build]
+    name: Package and publish npm
+    runs-on: ubuntu-24.04
+    permissions:
+      id-token: write
+      contents: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          path: artifacts
+
+      - name: Setup Node.js
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
+        with:
+          node-version: 24
+          registry-url: "https://registry.npmjs.org"
+          scope: "@moyeranqianzhi"
+
+      - name: Stage npm packages
+        env:
+          VERSION: ${{ needs.tag-check.outputs.version }}
+        run: |
+          set -euo pipefail
+          python3 ./scripts/stage_npm_packages.py \
+            --version "$VERSION" \
+            --artifacts-dir artifacts \
+            --output-dir dist/npm \
+            --packages codex
+
+      - name: Publish to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          VERSION: ${{ needs.tag-check.outputs.version }}
+        run: |
+          set -euo pipefail
+          for tarball in dist/npm/*.tgz; do
+            echo "Publishing $(basename "$tarball")..."
+            npm publish "$tarball" --access public || {
+              if npm publish "$tarball" --access public 2>&1 | grep -qi "previously published\|cannot publish over\|version already exists"; then
+                echo "Already published, skipping"
+              else
+                exit 1
+              fi
+            }
+          done
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe # v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ACX ${{ needs.tag-check.outputs.version }}
+          generate_release_notes: true
