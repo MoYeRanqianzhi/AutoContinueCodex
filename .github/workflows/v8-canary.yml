@@ -2,6 +2,7 @@ name: v8-canary
 
 on:
   pull_request:
+    branches: [main] # [ACX]
     paths:
       - ".github/actions/setup-bazel-ci/**"
       - ".github/scripts/rusty_v8_bazel.py"
