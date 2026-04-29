@@ -740,6 +740,11 @@ pub(crate) enum AppEvent {
     SyntaxThemeSelected {
         name: String,
     },
+
+    // [ACX]
+    /// 用户请求停止 AutoContinue 自动继续
+    AcxStopRequested,
+    // [/ACX]
 }
 
 #[derive(Debug)]

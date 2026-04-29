@@ -77,6 +77,9 @@ use crate::tui::TuiEvent;
 use crate::update_action::UpdateAction;
 use crate::version::CODEX_CLI_VERSION;
 use codex_ansi_escape::ansi_escape_line;
+// [ACX]
+use codex_auto_continue::{AutoContinueManager, AcxAction};
+// [/ACX]
 use codex_app_server_client::AppServerRequestHandle;
 use codex_app_server_client::TypedRequestError;
 use codex_app_server_protocol::AddCreditsNudgeCreditType;
@@ -181,6 +184,7 @@ use toml::Value as TomlValue;
 use uuid::Uuid;
 mod agent_navigation;
 mod app_server_adapter;
+mod acx_integration; // [ACX]
 pub(crate) mod app_server_requests;
 mod background_requests;
 mod config_persistence;
@@ -570,6 +574,10 @@ pub(crate) struct App {
     // overwrite a newer toggle, even if the plugin is toggled from different
     // cwd contexts.
     pending_plugin_enabled_writes: HashMap<String, Option<bool>>,
+    // [ACX]
+    /// AutoContinue 管理器，负责自动继续/重试逻辑
+    pub(crate) acx_manager: Option<AutoContinueManager>,
+    // [/ACX]
 }
 
 fn active_turn_not_steerable_turn_error(error: &TypedRequestError) -> Option<AppServerTurnError> {
@@ -660,6 +668,7 @@ impl App {
         remote_app_server_url: Option<String>,
         remote_app_server_auth_token: Option<String>,
         environment_manager: Arc<EnvironmentManager>,
+        acx_config: Option<codex_auto_continue::AcxConfig>, // [ACX]
     ) -> Result<AppExitInfo> {
         use tokio_stream::StreamExt;
         let (app_event_tx, mut app_event_rx) = unbounded_channel();
@@ -930,7 +939,23 @@ impl App {
             pending_primary_events: VecDeque::new(),
             pending_app_server_requests: PendingAppServerRequests::default(),
             pending_plugin_enabled_writes: HashMap::new(),
+            acx_manager: None, // [ACX]
         };
+
+        // [ACX] 根据 CLI 参数初始化 AutoContinue 管理器
+        if let Some(acx_cfg) = acx_config {
+            match AutoContinueManager::new(acx_cfg) {
+                Ok(mgr) => {
+                    tracing::info!("[ACX] AutoContinue 已启用");
+                    app.acx_manager = Some(mgr);
+                }
+                Err(e) => {
+                    tracing::error!("[ACX] 初始化失败: {e}");
+                }
+            }
+        }
+        // [/ACX]
+
         if let Some(started) = initial_started_thread {
             app.enqueue_primary_thread_session(started.session, started.turns)
                 .await?;
@@ -1033,6 +1058,11 @@ impl App {
                     }
                     event = tui_events.next() => {
                         if let Some(event) = event {
+                            // [ACX] 用户输入时取消待执行的自动继续计时器
+                            if let Some(ref mut mgr) = app.acx_manager {
+                                mgr.cancel_pending();
+                            }
+                            // [/ACX]
                             match app.handle_tui_event(tui, &mut app_server, event).await {
                                 Ok(control) => control,
                                 Err(err) => break Err(err),
@@ -1052,6 +1082,35 @@ impl App {
                         }
                         AppRunControl::Continue
                     }
+                    // [ACX] 自动继续计时器
+                    _ = async {
+                        if let Some(ref mut mgr) = app.acx_manager {
+                            if let Some(timer) = mgr.timer_future() {
+                                timer.await
+                            } else {
+                                std::future::pending::<()>().await
+                            }
+                        } else {
+                            std::future::pending::<()>().await
+                        }
+                    } => {
+                        if let Some(ref mut mgr) = app.acx_manager {
+                            match mgr.on_timer_fired().await {
+                                AcxAction::SendContinue(prompt) => {
+                                    app.app_event_tx.send(AppEvent::SubmitUserMessageWithMode {
+                                        text: prompt,
+                                        collaboration_mode: Default::default(),
+                                    });
+                                }
+                                AcxAction::Stopped { reason } => {
+                                    tracing::info!("[ACX] 停止: {reason}");
+                                }
+                                AcxAction::None => {}
+                            }
+                        }
+                        AppRunControl::Continue
+                    }
+                    // [/ACX]
                 };
                 if App::should_stop_waiting_for_initial_session(
                     waiting_for_initial_session_configured,

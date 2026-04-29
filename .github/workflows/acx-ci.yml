@@ -1,0 +1,55 @@
+# ACX CI — 构建并测试 auto-continue crate + codex-tui 集成
+name: acx-ci
+
+on:
+  push:
+    branches: [acx, main]
+  pull_request:
+    branches: [acx]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  # 1. 独立 crate 构建+测试（快速反馈）
+  auto-continue-crate:
+    name: auto-continue crate
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: dtolnay/rust-toolchain@a0b273b48ed29de4470960879e8381ff45632f26 # 1.93.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: codex-rs
+      - name: Build auto-continue
+        working-directory: codex-rs
+        run: cargo build -p codex-auto-continue
+      - name: Test auto-continue
+        working-directory: codex-rs
+        run: cargo test -p codex-auto-continue
+
+  # 2. codex-tui 集成编译检查
+  tui-integration:
+    name: codex-tui check
+    runs-on: ubuntu-24.04
+    needs: auto-continue-crate
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - name: Install Linux build dependencies
+        shell: bash
+        run: |
+          sudo apt-get update -y
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends pkg-config libcap-dev
+      - uses: dtolnay/rust-toolchain@a0b273b48ed29de4470960879e8381ff45632f26 # 1.93.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: codex-rs
+      - name: Check codex-tui compiles
+        working-directory: codex-rs
+        run: cargo check -p codex-tui

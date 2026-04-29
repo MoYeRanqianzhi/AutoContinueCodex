@@ -12,6 +12,7 @@ should shrink and eventually disappear.
 */
 
 use super::App;
+use super::acx_integration; // [ACX]
 use crate::app_command::AppCommand;
 use crate::app_event::AppEvent;
 use crate::app_server_session::AppServerSession;
@@ -204,6 +205,15 @@ impl App {
             }
             _ => {}
         }
+
+        // [ACX] Turn 完成时通知 AutoContinue 管理器
+        if let ServerNotification::TurnCompleted(ref notif) = notification {
+            if let Some(ref mut mgr) = self.acx_manager {
+                let outcome = acx_integration::turn_to_outcome(&notif.turn);
+                mgr.on_turn_completed(outcome);
+            }
+        }
+        // [/ACX]
 
         match server_notification_thread_target(&notification) {
             ServerNotificationThreadTarget::Thread(thread_id) => {

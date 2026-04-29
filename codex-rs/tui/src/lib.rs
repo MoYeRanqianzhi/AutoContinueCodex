@@ -1407,6 +1407,32 @@ async fn run_ratatui_app(
         && trust_decision_was_made
         && WindowsSandboxLevel::from_config(&config) == WindowsSandboxLevel::Disabled;
 
+    // [ACX] 从 CLI 参数构建 AcxConfig
+    let acx_config = if cli.acx_enabled {
+        let prompt_source = if let Some(ref pipe_cmd) = cli.acx_continue_prompt_pipe {
+            codex_auto_continue::PromptSource::Pipe {
+                command: pipe_cmd.clone(),
+                format: None,
+            }
+        } else if let Some(ref io_path) = cli.acx_continue_prompt_io {
+            codex_auto_continue::PromptSource::Io(std::path::PathBuf::from(io_path))
+        } else if let Some(ref static_prompt) = cli.acx_continue_prompt {
+            codex_auto_continue::PromptSource::Static(static_prompt.clone())
+        } else {
+            codex_auto_continue::PromptSource::Static("Continue".to_string())
+        };
+        Some(codex_auto_continue::AcxConfig {
+            enabled: true,
+            prompt: prompt_source,
+            delay_seconds: cli.acx_delay,
+            stop_whens: cli.acx_stop_when.clone(),
+            stop_hooks: cli.acx_stop_hook.clone(),
+        })
+    } else {
+        None
+    };
+    // [/ACX]
+
     let Cli {
         prompt,
         shared,
@@ -1459,6 +1485,7 @@ async fn run_ratatui_app(
         remote_url,
         remote_auth_token,
         environment_manager,
+        acx_config, // [ACX]
     )
     .await;
 
