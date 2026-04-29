@@ -1,5 +1,6 @@
 # ACX Release — 构建 + npm 发布
-# 触发方式：推送 acx-v*.*.* tag
+# 触发：推送 acx-v*.*.* tag
+# 构建步骤复用上游 openai/codex 的基础设施（V8 预编译件等）
 name: acx-release
 
 on:
@@ -30,59 +31,121 @@ jobs:
             exit 1
           fi
           echo "version=${tag_ver}" >> "$GITHUB_OUTPUT"
-          echo "Version: ${tag_ver}"
 
   build:
     needs: tag-check
     name: Build - ${{ matrix.target }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
+    permissions:
+      contents: read
+      id-token: write
+    defaults:
+      run:
+        working-directory: codex-rs
+    env:
+      CARGO_PROFILE_RELEASE_LTO: thin
     strategy:
       fail-fast: false
       matrix:
         include:
-          - runner: ubuntu-24.04
-            target: x86_64-unknown-linux-musl
-          - runner: ubuntu-24.04-arm
-            target: aarch64-unknown-linux-musl
           - runner: macos-15-xlarge
             target: aarch64-apple-darwin
           - runner: macos-15-large
             target: x86_64-apple-darwin
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
           - runner: windows-latest
             target: x86_64-pc-windows-msvc
           - runner: windows-11-arm
             target: aarch64-pc-windows-msvc
-    defaults:
-      run:
-        working-directory: codex-rs
+
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
+        shell: bash
         run: |
+          set -euo pipefail
           sudo apt-get update -y
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends pkg-config libcap-dev
+
+      - name: Install UBSan runtime (musl)
+        if: contains(matrix.target, 'linux-musl')
+        shell: bash
+        run: sudo DEBIAN_FRONTEND=noninteractive apt-get install -y libubsan1
 
       - uses: dtolnay/rust-toolchain@a0b273b48ed29de4470960879e8381ff45632f26 # 1.93.0
         with:
           targets: ${{ matrix.target }}
 
-      - name: Install musl tools (Linux x86_64)
-        if: matrix.target == 'x86_64-unknown-linux-musl'
-        run: sudo apt-get install -y musl-tools
+      # --- musl-specific setup (Zig cross-compile + V8 prebuilt) ---
+      - if: contains(matrix.target, 'linux-musl')
+        name: Use hermetic Cargo home (musl)
+        shell: bash
+        run: |
+          cargo_home="${GITHUB_WORKSPACE}/.cargo-home"
+          mkdir -p "${cargo_home}/bin"
+          echo "CARGO_HOME=${cargo_home}" >> "$GITHUB_ENV"
+          echo "${cargo_home}/bin" >> "$GITHUB_PATH"
+          : > "${cargo_home}/config.toml"
 
-      - name: Build release binaries
-        run: cargo build --release --target ${{ matrix.target }} -p codex-cli -p codex-tui
+      - if: contains(matrix.target, 'linux-musl')
+        name: Install Zig
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
+        with:
+          version: 0.14.0
 
-      - name: Upload artifacts
+      - if: contains(matrix.target, 'linux-musl')
+        name: Install musl build tools
+        env:
+          TARGET: ${{ matrix.target }}
+        run: bash "${GITHUB_WORKSPACE}/.github/scripts/install-musl-build-tools.sh"
+
+      - if: contains(matrix.target, 'linux-musl')
+        name: Clear sanitizer flags (musl)
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "AWS_LC_SYS_NO_JITTER_ENTROPY=1" >> "$GITHUB_ENV"
+          target_var="AWS_LC_SYS_NO_JITTER_ENTROPY_${{ matrix.target }}"
+          echo "${target_var//-/_}=1" >> "$GITHUB_ENV"
+          echo "RUSTFLAGS=" >> "$GITHUB_ENV"
+          echo "CARGO_ENCODED_RUSTFLAGS=" >> "$GITHUB_ENV"
+          echo "RUSTDOCFLAGS=" >> "$GITHUB_ENV"
+          echo "CARGO_BUILD_RUSTFLAGS=" >> "$GITHUB_ENV"
+
+      - if: contains(matrix.target, 'linux-musl')
+        name: Configure musl rusty_v8 artifact overrides
+        uses: ./.github/actions/setup-rusty-v8-musl
+        with:
+          target: ${{ matrix.target }}
+
+      # --- Build ---
+      - name: Cargo build
+        shell: bash
+        run: |
+          cargo build --target ${{ matrix.target }} --release --bin codex
+
+      - name: Stage binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          ext=""
+          if [[ "${{ matrix.target }}" == *windows* ]]; then ext=".exe"; fi
+          src="target/${{ matrix.target }}/release/codex${ext}"
+          dest="${GITHUB_WORKSPACE}/staged/${{ matrix.target }}/codex/"
+          mkdir -p "${dest}"
+          cp "${src}" "${dest}codex${ext}"
+
+      - name: Upload artifact
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
         with:
           name: binaries-${{ matrix.target }}
-          path: |
-            codex-rs/target/${{ matrix.target }}/release/codex
-            codex-rs/target/${{ matrix.target }}/release/codex.exe
+          path: staged/${{ matrix.target }}
 
   package-npm:
     needs: [tag-check, build]
@@ -105,14 +168,26 @@ jobs:
           registry-url: "https://registry.npmjs.org"
           scope: "@moyeranqianzhi"
 
+      - uses: pnpm/action-setup@a8198c4bff370c8506180b035930dea56dbd5288 # v5
+
       - name: Stage npm packages
         env:
           VERSION: ${{ needs.tag-check.outputs.version }}
+        shell: bash
         run: |
           set -euo pipefail
+
+          # Reorganize artifacts to match stage_npm_packages.py expectations
+          mkdir -p build-artifacts
+          for dir in artifacts/binaries-*; do
+            target=$(basename "$dir" | sed 's/binaries-//')
+            mkdir -p "build-artifacts/${target}"
+            cp -r "$dir"/* "build-artifacts/${target}/"
+          done
+
           python3 ./scripts/stage_npm_packages.py \
             --version "$VERSION" \
-            --artifacts-dir artifacts \
+            --artifacts-dir build-artifacts \
             --output-dir dist/npm \
             --packages codex
 
@@ -120,17 +195,20 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           VERSION: ${{ needs.tag-check.outputs.version }}
+        shell: bash
         run: |
           set -euo pipefail
           for tarball in dist/npm/*.tgz; do
             echo "Publishing $(basename "$tarball")..."
-            npm publish "$tarball" --access public || {
-              if npm publish "$tarball" --access public 2>&1 | grep -qi "previously published\|cannot publish over\|version already exists"; then
+            publish_output="$(npm publish "${tarball}" --access public 2>&1)" || {
+              if grep -qiE "previously published|cannot publish over|version already exists" <<< "${publish_output}"; then
                 echo "Already published, skipping"
               else
+                echo "${publish_output}"
                 exit 1
               fi
             }
+            echo "${publish_output}"
           done
 
       - name: Create GitHub release
