@@ -774,8 +774,8 @@ jobs:
           token: ${{ secrets.WINGET_PUBLISH_PAT }}
 
   update-branch:
-    if: false # [ACX] 不需要更新 alpha 分支
     name: Update latest-alpha-cli branch
+    if: false # [ACX] 不需要更新 alpha 分支
     permissions:
       contents: write
     needs: release
