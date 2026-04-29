@@ -1,0 +1,93 @@
+# 自动同步上游 openai/codex 更新（含 tag）
+# 每小时检查一次，存在 merge-conflict issue 时自动暂停
+name: acx-sync-upstream
+
+on:
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-24.04
+    steps:
+      # 检查是否有未解决的合并冲突 issue，有则跳过
+      - name: Check for open merge conflict issue
+        id: check
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: 'acx-merge-conflict',
+              state: 'open',
+              per_page: 1,
+            });
+            const skip = issues.length > 0;
+            core.setOutput('skip', skip.toString());
+            if (skip) core.info('存在未解决的合并冲突 issue，跳过同步');
+
+      - name: Checkout
+        if: steps.check.outputs.skip == 'false'
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          ref: acx
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Sync upstream and merge
+        if: steps.check.outputs.skip == 'false'
+        id: merge
+        run: |
+          set -euo pipefail
+          git config user.name "ACX Bot"
+          git config user.email "acx-bot@users.noreply.github.com"
+
+          # 添加上游 remote
+          git remote add upstream https://github.com/openai/codex.git || true
+          git fetch upstream --tags --force
+
+          # 检查上游是否有新提交
+          LOCAL_MAIN=$(git rev-parse origin/main 2>/dev/null || echo "none")
+          UPSTREAM_MAIN=$(git rev-parse upstream/main 2>/dev/null || echo "none")
+          if [ "$LOCAL_MAIN" = "$UPSTREAM_MAIN" ]; then
+            echo "skip_merge=true" >> "$GITHUB_OUTPUT"
+            echo "上游无新提交，跳过"
+            exit 0
+          fi
+
+          echo "skip_merge=false" >> "$GITHUB_OUTPUT"
+
+          # 同步 main 分支
+          git checkout main
+          git merge upstream/main --ff-only
+          git push origin main
+
+          # 同步所有 tag
+          git push origin --tags --force
+
+          # 合并 main → acx
+          git checkout acx
+          git merge main --no-edit
+          git push origin acx
+
+      - name: Create issue on merge conflict
+        if: failure() && steps.check.outputs.skip == 'false'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: '[ACX] 上游合并冲突，需手动解决',
+              body: [
+                '自动同步上游 `openai/codex` 时发生合并冲突。',
+                '',
+                '**请手动解决冲突后关闭此 Issue，定时同步将自动恢复。**',
+                '',
+                `[查看 CI 日志](${runUrl})`,
+              ].join('\n'),
+              labels: ['acx-merge-conflict'],
+            });
