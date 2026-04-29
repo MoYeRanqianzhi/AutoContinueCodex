@@ -612,7 +612,7 @@ jobs:
           # Node 24 bundles npm >= 11.5.1, which trusted publishing requires.
           node-version: 24
           registry-url: "https://registry.npmjs.org"
-          scope: "@openai"
+          scope: "@moyeranqianzhi" # [ACX]
 
       - name: Download npm tarballs from release
         env:
@@ -754,7 +754,7 @@ jobs:
     needs: release
     # Only publish stable/mainline releases to WinGet; pre-releases include a
     # '-' in the semver string (e.g., 1.2.3-alpha.1).
-    if: ${{ !contains(needs.release.outputs.version, '-') }}
+    if: false # [ACX] 不需要 winget 发布
     # This job only invokes a GitHub Action to open/update the winget-pkgs PR;
     # it does not execute Windows-only tooling, so Linux is sufficient.
     runs-on: ubuntu-latest
@@ -773,6 +773,7 @@ jobs:
           token: ${{ secrets.WINGET_PUBLISH_PAT }}
 
   update-branch:
+    if: false # [ACX] 不需要更新 alpha 分支
     name: Update latest-alpha-cli branch
     permissions:
       contents: write
