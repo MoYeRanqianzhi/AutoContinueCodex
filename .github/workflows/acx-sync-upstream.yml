@@ -49,12 +49,12 @@ jobs:
 
           # 添加上游 remote
           git remote add upstream https://github.com/openai/codex.git || true
-          git fetch upstream --tags --force
+          git fetch upstream main --tags --force
 
-          # 检查上游是否有新提交
-          LOCAL_MAIN=$(git rev-parse origin/main 2>/dev/null || echo "none")
-          UPSTREAM_MAIN=$(git rev-parse upstream/main 2>/dev/null || echo "none")
-          if [ "$LOCAL_MAIN" = "$UPSTREAM_MAIN" ]; then
+          # 检查上游是否有新提交（对比上次合并的基点）
+          MERGE_BASE=$(git merge-base HEAD upstream/main 2>/dev/null || echo "none")
+          UPSTREAM_HEAD=$(git rev-parse upstream/main 2>/dev/null || echo "none")
+          if [ "$MERGE_BASE" = "$UPSTREAM_HEAD" ]; then
             echo "skip_merge=true" >> "$GITHUB_OUTPUT"
             echo "上游无新提交，跳过"
             exit 0
@@ -62,18 +62,13 @@ jobs:
 
           echo "skip_merge=false" >> "$GITHUB_OUTPUT"
 
-          # 同步 main 分支（显式指定 origin/main 避免多 remote 歧义）
-          git checkout -B main origin/main
-          git merge upstream/main --ff-only
-          git push origin main
-
-          # 同步所有 tag
-          git push origin --tags --force
-
-          # 合并 main → acx
-          git checkout acx
-          git merge main --no-edit
+          # 直接将上游 main 合并到 acx（跳过 main 分支镜像，
+          # 因为 GITHUB_TOKEN 无法推送含 workflow 文件的变更）
+          git merge upstream/main --no-edit
           git push origin acx
+
+          # 同步上游 tag
+          git push origin --tags --force
 
       - name: Create issue on merge conflict
         if: failure() && steps.check.outputs.skip == 'false'
