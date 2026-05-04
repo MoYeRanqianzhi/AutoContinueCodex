@@ -1,92 +1,93 @@
 # ACX — AutoContinue + Codex
 
 <p align="center"><code>npm i -g @moyeranqianzhi/acx</code></p>
-<p align="center"><strong>ACX</strong> 是 <a href="https://github.com/openai/codex">OpenAI Codex CLI</a> 的增强版本，内嵌了 <a href="https://github.com/MoYeRanqianzhi/AutoContinue">AutoContinue</a> 自动继续/重试功能。</p>
+<p align="center"><strong>ACX</strong> is an enhanced version of <a href="https://github.com/openai/codex">OpenAI Codex CLI</a> with built-in <a href="https://github.com/MoYeRanqianzhi/AutoContinue">AutoContinue</a> auto-continue and auto-retry capabilities.</p>
+<p align="center"><a href="README.zh-CN.md">中文文档</a></p>
 
 ---
 
-## 什么是 ACX？
+## What is ACX?
 
 ACX = **A**uto**C**ontinue + Code**X**
 
-它在 [OpenAI Codex CLI](https://github.com/openai/codex) 的基础上，内嵌了 [AutoContinue](https://github.com/MoYeRanqianzhi/AutoContinue) 的核心逻辑，实现：
+Built on top of [OpenAI Codex CLI](https://github.com/openai/codex), ACX embeds the core logic of [AutoContinue](https://github.com/MoYeRanqianzhi/AutoContinue) to provide:
 
-- **自动继续**：Turn 完成后自动发送继续提示词，无需人工干预
-- **智能重试**：遇到可重试错误（速率限制、服务器过载、连接失败等）时，指数退避自动重试，上限 5 分钟
-- **不可重试错误自动停止**：上下文超限、认证失败等永久性错误不会浪费重试
-- **可扩展的停止钩子**：支持按轮次、时间、持续时长、自定义命令等条件自动停止
-- **`/acx-stop` 命令**：随时手动停止自动继续
+- **Auto-Continue**: Automatically sends a continue prompt after each turn completes — no manual intervention needed
+- **Smart Retry**: Retries with exponential backoff on transient errors (rate limits, server overload, connection failures, etc.), capped at 5 minutes
+- **Auto-Stop on Fatal Errors**: Permanent errors like context exceeded or auth failure stop immediately without wasting retries
+- **Extensible Stop Hooks**: Stop based on round count, wall-clock time, duration, or custom commands
+- **`/acx-stop` Command**: Manually stop auto-continue at any time from the TUI
 
-所有 Codex CLI 原有功能完整保留。
+All original Codex CLI features are fully preserved.
 
-## 安装
+## Installation
 
 ```shell
 npm install -g @moyeranqianzhi/acx
 ```
 
-安装后命令行工具名称仍为 `codex`。
+The CLI binary is still named `codex` after installation.
 
-## 使用
-
-```shell
-# 启用自动继续模式
-codex --acx "你的任务描述"
-
-# 自定义继续提示词和延迟
-codex --acx --acx-cp "继续迭代" --acx-delay 10 "重构项目"
-
-# 带停止条件
-codex --acx --acx-sw "<round=5>" --acx-sw "<duration=3600>" "优化代码库"
-
-# 运行中手动停止：在 TUI 输入 /acx-stop
-```
-
-### ACX 参数
-
-| 参数 | 说明 | 默认值 |
-|------|------|--------|
-| `--acx` | 启用自动继续模式 | `false` |
-| `--acx-cp` | 继续提示词 | `"Continue"` |
-| `--acx-cpio` | 继续提示词 IO 文件（每次重新读取） | — |
-| `--acx-cpp` | 继续提示词管道命令 | — |
-| `--acx-delay` | 基础等待秒数（错误时指数退避） | `15` |
-| `--acx-sw` | 预设停止条件（可重复） | — |
-| `--acx-sh` | 自定义停止命令钩子（可重复） | — |
-
-### 停止条件示例
+## Usage
 
 ```shell
---acx-sw "<round=10>"       # 10 轮后停止
---acx-sw "<error>"           # 任何错误立即停止（不重试）
---acx-sw "<duration=3600>"   # 运行 1 小时后停止
---acx-sw "<time=2026-01-01T08:00:00>"  # 到指定时间停止
+# Enable auto-continue mode
+codex --acx "your task description"
+
+# Custom continue prompt and delay
+codex --acx --acx-cp "Keep iterating" --acx-delay 10 "refactor the project"
+
+# With stop conditions
+codex --acx --acx-sw "<round=5>" --acx-sw "<duration=3600>" "optimize the codebase"
+
+# Stop manually during a session: type /acx-stop in the TUI
 ```
 
-## 支持平台
+### ACX Flags
 
-| 平台 | 架构 | 状态 |
-|------|------|------|
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--acx` | Enable auto-continue mode | `false` |
+| `--acx-cp` | Continue prompt text | `"Continue"` |
+| `--acx-cpio` | Continue prompt IO file (re-read each time) | — |
+| `--acx-cpp` | Continue prompt pipe command | — |
+| `--acx-delay` | Base delay in seconds (exponential backoff on errors) | `15` |
+| `--acx-sw` | Preset stop condition (repeatable) | — |
+| `--acx-sh` | Custom stop hook command (repeatable) | — |
+
+### Stop Condition Examples
+
+```shell
+--acx-sw "<round=10>"       # Stop after 10 rounds
+--acx-sw "<error>"           # Stop on any error (no retry)
+--acx-sw "<duration=3600>"   # Stop after 1 hour
+--acx-sw "<time=2026-01-01T08:00:00>"  # Stop at a specific time
+```
+
+## Supported Platforms
+
+| Platform | Architecture | Status |
+|----------|-------------|--------|
 | Linux | x86_64, ARM64 | ✅ |
 | macOS | ARM64 (Apple Silicon) | ✅ |
 | Windows | x86_64, ARM64 | ✅ |
 
-## 与上游同步
+## Upstream Sync
 
-ACX 通过 GitHub Actions 每小时自动同步 [openai/codex](https://github.com/openai/codex) 上游更新。ACX 的修改采用最小插入原则（`// [ACX]` 标记），核心逻辑封装在独立 crate `codex-auto-continue` 中，降低合并冲突风险。
+ACX automatically syncs with [openai/codex](https://github.com/openai/codex) upstream updates every hour via GitHub Actions. ACX modifications follow a minimal-insertion principle (marked with `// [ACX]` comments), with core logic encapsulated in a standalone `codex-auto-continue` crate to minimize merge conflicts.
 
-## 致谢
+## Acknowledgements
 
-- [OpenAI Codex CLI](https://github.com/openai/codex) — 底层 CLI 框架，Apache-2.0 许可
-- [AutoContinue](https://github.com/MoYeRanqianzhi/AutoContinue) — 自动继续/重试的核心逻辑来源
+- [OpenAI Codex CLI](https://github.com/openai/codex) — The underlying CLI framework, licensed under Apache-2.0
+- [AutoContinue](https://github.com/MoYeRanqianzhi/AutoContinue) — The original auto-continue/retry logic
 
-## 许可
+## License
 
-本项目基于 [Apache-2.0 License](LICENSE) 许可，与上游 Codex 保持一致。
+This project is licensed under the [Apache-2.0 License](LICENSE), consistent with upstream Codex.
 
-## 相关文档
+## Documentation
 
-- [Codex 官方文档](https://developers.openai.com/codex)
-- [AutoContinue 项目](https://github.com/MoYeRanqianzhi/AutoContinue)
+- [Codex Documentation](https://developers.openai.com/codex)
+- [AutoContinue Project](https://github.com/MoYeRanqianzhi/AutoContinue)
 - [Contributing](./docs/contributing.md)
 - [Installing & building](./docs/install.md)
