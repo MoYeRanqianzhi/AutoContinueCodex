@@ -69,33 +69,31 @@ pub struct Cli {
     #[arg(long = "no-alt-screen", default_value_t = false)]
     pub no_alt_screen: bool,
 
-    // [ACX] AutoContinue 参数 ──────────────────────────────
-    /// 启用 AutoContinue 自动继续功能
-    #[arg(long = "acx", default_value_t = false)]
-    pub acx_enabled: bool,
+    // [ACX] AutoContinue 参数（AC 原版风格） ───────────────
+    // acx 二进制始终启用自动继续，不需要 --acx 开关
 
     /// AutoContinue 继续提示词（静态字符串）
-    #[arg(long = "acx-cp", default_value = "Continue")]
+    #[arg(long = "continue-prompt", default_value = "Continue")]
     pub acx_continue_prompt: Option<String>,
 
     /// AutoContinue 继续提示词 IO 文件路径（动态读取）
-    #[arg(long = "acx-cpio")]
+    #[arg(long = "continue-prompt-io")]
     pub acx_continue_prompt_io: Option<String>,
 
     /// AutoContinue 继续提示词管道命令
-    #[arg(long = "acx-cpp")]
+    #[arg(long = "continue-prompt-pipe")]
     pub acx_continue_prompt_pipe: Option<String>,
 
-    /// AutoContinue 延迟时间（秒），静默超时后等待多久再发送继续提示词
-    #[arg(long = "acx-delay", default_value_t = 15)]
-    pub acx_delay: u64,
+    /// AutoContinue 基础等待秒数，静默超时后等待多久再发送继续提示词
+    #[arg(long = "sleep-time", default_value_t = 15)]
+    pub acx_sleep_time: u64,
 
-    /// AutoContinue 停止条件关键词列表
-    #[arg(long = "acx-sw")]
+    /// AutoContinue 停止条件关键词列表（可重复）
+    #[arg(long = "stop-when")]
     pub acx_stop_when: Vec<String>,
 
-    /// AutoContinue 停止时执行的钩子命令列表
-    #[arg(long = "acx-sh")]
+    /// AutoContinue 自定义停止命令钩子（可重复）
+    #[arg(long = "stop-hook")]
     pub acx_stop_hook: Vec<String>,
     // [/ACX] ────────────────────────────────────────────────
 

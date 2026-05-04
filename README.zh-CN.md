@@ -26,42 +26,41 @@ ACX = **A**uto**C**ontinue + Code**X**
 npm install -g @moyeranqianzhi/acx
 ```
 
-安装后命令行工具名称仍为 `codex`。
+安装后使用 `acx` 命令。自动继续默认启用，无需额外标志。
 
 ## 使用
 
 ```shell
-# 启用自动继续模式
-codex --acx "你的任务描述"
+# 自动继续默认启用
+acx "你的任务描述"
 
 # 自定义继续提示词和延迟
-codex --acx --acx-cp "继续迭代" --acx-delay 10 "重构项目"
+acx --continue-prompt "继续迭代" --sleep-time 10 "重构项目"
 
 # 带停止条件
-codex --acx --acx-sw "<round=5>" --acx-sw "<duration=3600>" "优化代码库"
+acx --stop-when "<round=5>" --stop-when "<duration=3600>" "优化代码库"
 
 # 运行中手动停止：在 TUI 输入 /acx-stop
 ```
 
 ### ACX 参数
 
-| 参数 | 说明 | 默认值 |
-|------|------|--------|
-| `--acx` | 启用自动继续模式 | `false` |
-| `--acx-cp` | 继续提示词 | `"Continue"` |
-| `--acx-cpio` | 继续提示词 IO 文件（每次重新读取） | — |
-| `--acx-cpp` | 继续提示词管道命令 | — |
-| `--acx-delay` | 基础等待秒数（错误时指数退避） | `15` |
-| `--acx-sw` | 预设停止条件（可重复） | — |
-| `--acx-sh` | 自定义停止命令钩子（可重复） | — |
+| 参数 | 短参数 | 说明 | 默认值 |
+|------|--------|------|--------|
+| `--continue-prompt` | `-cp` | 继续提示词 | `"Continue"` |
+| `--continue-prompt-io` | `-cpio` | 继续提示词 IO 文件（每次重新读取） | — |
+| `--continue-prompt-pipe` | `-cpp` | 继续提示词管道命令 | — |
+| `--sleep-time` | `-st` | 基础等待秒数（错误时指数退避） | `15` |
+| `--stop-when` | `-sw` | 预设停止条件（可重复） | — |
+| `--stop-hook` | `-sh` | 自定义停止命令钩子（可重复） | — |
 
 ### 停止条件示例
 
 ```shell
---acx-sw "<round=10>"       # 10 轮后停止
---acx-sw "<error>"           # 任何错误立即停止（不重试）
---acx-sw "<duration=3600>"   # 运行 1 小时后停止
---acx-sw "<time=2026-01-01T08:00:00>"  # 到指定时间停止
+--stop-when "<round=10>"       # 10 轮后停止
+--stop-when "<error>"           # 任何错误立即停止（不重试）
+--stop-when "<duration=3600>"   # 运行 1 小时后停止
+--stop-when "<time=2026-01-01T08:00:00>"  # 到指定时间停止
 ```
 
 ## 支持平台

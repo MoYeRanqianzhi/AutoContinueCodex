@@ -75,7 +75,8 @@ if (!platformPackage) {
   throw new Error(`Unsupported target triple: ${targetTriple}`);
 }
 
-const codexBinaryName = process.platform === "win32" ? "codex.exe" : "codex";
+// [ACX] 二进制名称改为 acx
+const codexBinaryName = process.platform === "win32" ? "acx.exe" : "acx";
 const localVendorRoot = path.join(__dirname, "..", "vendor");
 const localBinaryPath = path.join(
   localVendorRoot,

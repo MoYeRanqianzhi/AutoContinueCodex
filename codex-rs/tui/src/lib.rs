@@ -1417,8 +1417,8 @@ async fn run_ratatui_app(
         && trust_decision_was_made
         && WindowsSandboxLevel::from_config(&config) == WindowsSandboxLevel::Disabled;
 
-    // [ACX] 从 CLI 参数构建 AcxConfig
-    let acx_config = if cli.acx_enabled {
+    // [ACX] acx 二进制始终启用自动继续，从 CLI 参数构建 AcxConfig
+    let acx_config = {
         let prompt_source = if let Some(ref pipe_cmd) = cli.acx_continue_prompt_pipe {
             codex_auto_continue::PromptSource::Pipe {
                 command: pipe_cmd.clone(),
@@ -1434,12 +1434,10 @@ async fn run_ratatui_app(
         Some(codex_auto_continue::AcxConfig {
             enabled: true,
             prompt: prompt_source,
-            delay_seconds: cli.acx_delay,
+            delay_seconds: cli.acx_sleep_time,
             stop_whens: cli.acx_stop_when.clone(),
             stop_hooks: cli.acx_stop_hook.clone(),
         })
-    } else {
-        None
     };
     // [/ACX]
 

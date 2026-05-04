@@ -26,42 +26,41 @@ All original Codex CLI features are fully preserved.
 npm install -g @moyeranqianzhi/acx
 ```
 
-The CLI binary is still named `codex` after installation.
+After installation, use the `acx` command. Auto-continue is enabled by default — no extra flags needed.
 
 ## Usage
 
 ```shell
-# Enable auto-continue mode
-codex --acx "your task description"
+# Auto-continue is enabled by default
+acx "your task description"
 
 # Custom continue prompt and delay
-codex --acx --acx-cp "Keep iterating" --acx-delay 10 "refactor the project"
+acx --continue-prompt "Keep iterating" --sleep-time 10 "refactor the project"
 
 # With stop conditions
-codex --acx --acx-sw "<round=5>" --acx-sw "<duration=3600>" "optimize the codebase"
+acx --stop-when "<round=5>" --stop-when "<duration=3600>" "optimize the codebase"
 
 # Stop manually during a session: type /acx-stop in the TUI
 ```
 
 ### ACX Flags
 
-| Flag | Description | Default |
-|------|-------------|---------|
-| `--acx` | Enable auto-continue mode | `false` |
-| `--acx-cp` | Continue prompt text | `"Continue"` |
-| `--acx-cpio` | Continue prompt IO file (re-read each time) | — |
-| `--acx-cpp` | Continue prompt pipe command | — |
-| `--acx-delay` | Base delay in seconds (exponential backoff on errors) | `15` |
-| `--acx-sw` | Preset stop condition (repeatable) | — |
-| `--acx-sh` | Custom stop hook command (repeatable) | — |
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--continue-prompt` | `-cp` | Continue prompt text | `"Continue"` |
+| `--continue-prompt-io` | `-cpio` | Continue prompt IO file (re-read each time) | — |
+| `--continue-prompt-pipe` | `-cpp` | Continue prompt pipe command | — |
+| `--sleep-time` | `-st` | Base delay in seconds (exponential backoff on errors) | `15` |
+| `--stop-when` | `-sw` | Preset stop condition (repeatable) | — |
+| `--stop-hook` | `-sh` | Custom stop hook command (repeatable) | — |
 
 ### Stop Condition Examples
 
 ```shell
---acx-sw "<round=10>"       # Stop after 10 rounds
---acx-sw "<error>"           # Stop on any error (no retry)
---acx-sw "<duration=3600>"   # Stop after 1 hour
---acx-sw "<time=2026-01-01T08:00:00>"  # Stop at a specific time
+--stop-when "<round=10>"       # Stop after 10 rounds
+--stop-when "<error>"           # Stop on any error (no retry)
+--stop-when "<duration=3600>"   # Stop after 1 hour
+--stop-when "<time=2026-01-01T08:00:00>"  # Stop at a specific time
 ```
 
 ## Supported Platforms

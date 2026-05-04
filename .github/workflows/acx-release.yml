@@ -180,7 +180,8 @@ jobs:
           src="target/${{ matrix.target }}/release/codex${ext}"
           dest="${GITHUB_WORKSPACE}/staged/${{ matrix.target }}/codex/"
           mkdir -p "${dest}"
-          cp "${src}" "${dest}codex${ext}"
+          # [ACX] 重命名为 acx，不修改上游 Cargo.toml
+          cp "${src}" "${dest}acx${ext}"
 
       - name: Upload artifact
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
