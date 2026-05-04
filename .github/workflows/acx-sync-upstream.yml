@@ -10,6 +10,9 @@ on:
 jobs:
   sync:
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      issues: write
     steps:
       # 检查是否有未解决的合并冲突 issue，有则跳过
       - name: Check for open merge conflict issue
@@ -59,8 +62,8 @@ jobs:
 
           echo "skip_merge=false" >> "$GITHUB_OUTPUT"
 
-          # 同步 main 分支
-          git checkout main
+          # 同步 main 分支（显式指定 origin/main 避免多 remote 歧义）
+          git checkout -B main origin/main
           git merge upstream/main --ff-only
           git push origin main
 

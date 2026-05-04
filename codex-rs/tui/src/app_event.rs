@@ -744,6 +744,11 @@ pub(crate) enum AppEvent {
     // [ACX]
     /// 用户请求停止 AutoContinue 自动继续
     AcxStopRequested,
+
+    /// ACX 自动继续：提交继续提示词（不改变当前协作模式）
+    AcxSubmitContinue {
+        text: String,
+    },
     // [/ACX]
 }
 

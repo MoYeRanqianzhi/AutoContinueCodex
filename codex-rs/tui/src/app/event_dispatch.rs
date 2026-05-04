@@ -1746,6 +1746,11 @@ impl App {
                     );
                 }
             }
+            // [ACX] 提交自动继续提示词（不改变当前协作模式）
+            AppEvent::AcxSubmitContinue { text } => {
+                self.chat_widget
+                    .submit_user_message_as_plain_user_turn(text.into());
+            }
             // [/ACX]
         }
         Ok(AppRunControl::Continue)

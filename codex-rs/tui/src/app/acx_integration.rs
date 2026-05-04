@@ -17,6 +17,9 @@ pub(crate) fn turn_to_outcome(turn: &Turn) -> TurnOutcome {
         // Turn 正常完成
         TurnStatus::Completed => TurnOutcome::Completed,
 
+        // Turn 仍在进行中（不应在 TurnCompleted 通知中出现，按完成处理）
+        TurnStatus::InProgress => TurnOutcome::Completed,
+
         // Turn 被用户中断
         TurnStatus::Interrupted => TurnOutcome::Interrupted,
 

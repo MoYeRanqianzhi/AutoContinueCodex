@@ -1097,9 +1097,8 @@ impl App {
                         if let Some(ref mut mgr) = app.acx_manager {
                             match mgr.on_timer_fired().await {
                                 AcxAction::SendContinue(prompt) => {
-                                    app.app_event_tx.send(AppEvent::SubmitUserMessageWithMode {
+                                    app.app_event_tx.send(AppEvent::AcxSubmitContinue {
                                         text: prompt,
-                                        collaboration_mode: Default::default(),
                                     });
                                 }
                                 AcxAction::Stopped { reason } => {
