@@ -169,7 +169,16 @@ jobs:
       - name: Cargo build
         shell: bash
         run: |
+          # [ACX] 构建 codex 主二进制
           cargo build --target ${{ matrix.target }} --release --bin codex
+          # [ACX] Windows 平台额外构建 sandbox-setup 和 command-runner
+          # build_npm_package.py 的 PACKAGE_NATIVE_COMPONENTS 要求
+          # win32 包包含 codex-windows-sandbox-setup 和 codex-command-runner
+          if [[ "${{ matrix.target }}" == *windows* ]]; then
+            cargo build --target ${{ matrix.target }} --release \
+              --bin codex-windows-sandbox-setup \
+              --bin codex-command-runner
+          fi
 
       - name: Stage binary
         shell: bash
@@ -177,11 +186,21 @@ jobs:
           set -euo pipefail
           ext=""
           if [[ "${{ matrix.target }}" == *windows* ]]; then ext=".exe"; fi
+
+          # [ACX] 暂存 codex 主二进制（重命名为 acx）
           src="target/${{ matrix.target }}/release/codex${ext}"
           dest="${GITHUB_WORKSPACE}/staged/${{ matrix.target }}/codex/"
           mkdir -p "${dest}"
           # [ACX] 重命名为 acx，不修改上游 Cargo.toml
           cp "${src}" "${dest}acx${ext}"
+
+          # [ACX] Windows 平台额外暂存 sandbox-setup 和 command-runner
+          # 这些二进制也放在 codex/ 目录下（与 COMPONENT_DEST_DIR 一致）
+          if [[ "${{ matrix.target }}" == *windows* ]]; then
+            for bin in codex-windows-sandbox-setup codex-command-runner; do
+              cp "target/${{ matrix.target }}/release/${bin}${ext}" "${dest}${bin}${ext}"
+            done
+          fi
 
       - name: Upload artifact
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
@@ -211,6 +230,63 @@ jobs:
           scope: "@moyeranqianzhi"
 
       - uses: pnpm/action-setup@a8198c4bff370c8506180b035930dea56dbd5288 # v5
+
+      # [ACX] 下载 ripgrep 二进制并放入 build-artifacts/<target>/path/ 目录
+      # build_npm_package.py 的 PACKAGE_NATIVE_COMPONENTS 要求每个平台包包含 rg
+      # COMPONENT_DEST_DIR 将 "rg" 映射到 "path" 子目录
+      # 下载 URL 和归档格式信息来自 codex-cli/bin/rg DotSlash 清单
+      - name: Download ripgrep binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # ripgrep 版本（与 codex-cli/bin/rg DotSlash 清单保持一致）
+          RG_VERSION="15.1.0"
+
+          # 定义各 target 对应的 ripgrep 下载信息
+          # 格式: target|archive_url|format|member_path
+          declare -a RG_TARGETS=(
+            "x86_64-unknown-linux-musl|https://github.com/BurntSushi/ripgrep/releases/download/${RG_VERSION}/ripgrep-${RG_VERSION}-x86_64-unknown-linux-musl.tar.gz|tar.gz|ripgrep-${RG_VERSION}-x86_64-unknown-linux-musl/rg"
+            "aarch64-unknown-linux-musl|https://github.com/BurntSushi/ripgrep/releases/download/${RG_VERSION}/ripgrep-${RG_VERSION}-aarch64-unknown-linux-gnu.tar.gz|tar.gz|ripgrep-${RG_VERSION}-aarch64-unknown-linux-gnu/rg"
+            "x86_64-apple-darwin|https://github.com/BurntSushi/ripgrep/releases/download/${RG_VERSION}/ripgrep-${RG_VERSION}-x86_64-apple-darwin.tar.gz|tar.gz|ripgrep-${RG_VERSION}-x86_64-apple-darwin/rg"
+            "aarch64-apple-darwin|https://github.com/BurntSushi/ripgrep/releases/download/${RG_VERSION}/ripgrep-${RG_VERSION}-aarch64-apple-darwin.tar.gz|tar.gz|ripgrep-${RG_VERSION}-aarch64-apple-darwin/rg"
+            "x86_64-pc-windows-msvc|https://github.com/BurntSushi/ripgrep/releases/download/${RG_VERSION}/ripgrep-${RG_VERSION}-x86_64-pc-windows-msvc.zip|zip|ripgrep-${RG_VERSION}-x86_64-pc-windows-msvc/rg.exe"
+            "aarch64-pc-windows-msvc|https://github.com/BurntSushi/ripgrep/releases/download/${RG_VERSION}/ripgrep-${RG_VERSION}-aarch64-pc-windows-msvc.zip|zip|ripgrep-${RG_VERSION}-aarch64-pc-windows-msvc/rg.exe"
+          )
+
+          for entry in "${RG_TARGETS[@]}"; do
+            IFS='|' read -r target url format member <<< "$entry"
+
+            # 只处理我们实际构建了的 target
+            artifact_dir="artifacts/binaries-${target}"
+            if [[ ! -d "$artifact_dir" ]]; then
+              echo "Skipping rg for ${target} (no build artifact found)"
+              continue
+            fi
+
+            echo "Downloading ripgrep for ${target}..."
+            dest_dir="artifacts/binaries-${target}/path"
+            mkdir -p "$dest_dir"
+
+            tmpdir=$(mktemp -d)
+            archive_file="${tmpdir}/$(basename "$url")"
+            curl -fSL --retry 3 --retry-delay 5 -o "$archive_file" "$url"
+
+            if [[ "$format" == "tar.gz" ]]; then
+              # 从 tar.gz 中提取 rg 二进制
+              tar -xzf "$archive_file" -C "$tmpdir" "$member"
+              cp "${tmpdir}/${member}" "${dest_dir}/rg"
+              chmod +x "${dest_dir}/rg"
+            elif [[ "$format" == "zip" ]]; then
+              # 从 zip 中提取 rg.exe
+              unzip -o -j "$archive_file" "$member" -d "$dest_dir"
+            fi
+
+            rm -rf "$tmpdir"
+            echo "  installed rg for ${target} -> ${dest_dir}"
+          done
+
+          echo "Ripgrep download complete."
 
       - name: Stage npm packages
         env:
