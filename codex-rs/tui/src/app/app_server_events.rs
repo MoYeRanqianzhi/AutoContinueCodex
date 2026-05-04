@@ -109,11 +109,10 @@ impl App {
             _ => {}
         }
 
-        // [ACX] Turn 完成时通知 AutoContinue 管理器
+        // [ACX] Turn 完成时通知 AutoContinue
         if let ServerNotification::TurnCompleted(ref notif) = notification {
-            if let Some(ref mut mgr) = self.acx_manager {
-                let outcome = super::acx_integration::turn_to_outcome(&notif.turn);
-                mgr.on_turn_completed(outcome);
+            if let Some(ref mut bridge) = self.acx_manager {
+                bridge.on_turn_completed(&notif.turn);
             }
         }
         // [/ACX]

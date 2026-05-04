@@ -17,10 +17,7 @@ pub mod config;
 pub mod hook;
 pub mod prompt;
 
-use std::pin::Pin;
-
 use anyhow::Result;
-use tokio::time::Sleep;
 
 pub use config::AcxConfig;
 pub use hook::{
@@ -60,6 +57,23 @@ pub enum AcxAction {
         /// 停止原因的人类可读描述
         reason: String,
     },
+}
+
+// ---------------------------------------------------------------------------
+// AcxAppEvent — 应用事件
+// ---------------------------------------------------------------------------
+
+/// ACX 应用事件
+///
+/// 通过 Codex 的 `AppEvent` 通道传递的 ACX 内部事件。
+/// 上层只需在 `AppEvent` 中保留一个 `AcxEvent(AcxAppEvent)` 变体，
+/// 所有路由逻辑由 ACX 桥接层处理。
+#[derive(Debug)]
+pub enum AcxAppEvent {
+    /// 计时器触发，附带解析好的提示词
+    TimerFired { text: String },
+    /// 用户请求停止自动继续（/acx-stop）
+    StopRequested,
 }
 
 // ---------------------------------------------------------------------------
@@ -179,7 +193,7 @@ impl AcxErrorKind {
 /// ACX 内部状态枚举
 ///
 /// 跟踪 `AutoContinueManager` 当前处于哪个阶段。
-/// 状态转换由 `on_turn_completed`、`on_timer_fired`、`cancel_pending`
+/// 状态转换由 `on_turn_completed`、`on_timer_fired_sync`、`cancel_pending`
 /// 和 `request_stop` 方法驱动。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AcxState {
@@ -189,10 +203,10 @@ enum AcxState {
     /// 在此状态下等待上层调用 `on_turn_completed()`。
     Monitoring,
 
-    /// 等待发送：计时器已启动，等待触发
+    /// 等待发送：延迟已记录，等待外部计时器触发
     ///
-    /// `on_turn_completed()` 启动了计时器，等待倒计时完成。
-    /// 此状态下上层可以通过 `timer_future()` 获取计时器并 await。
+    /// `on_turn_completed()` 记录了待执行延迟，等待外部 bridge 层启动计时器。
+    /// 此状态下上层可以通过 `take_pending_delay()` 获取延迟秒数。
     WaitingToSend,
 
     /// 已停止：ACX 不再活跃
@@ -213,31 +227,29 @@ enum AcxState {
 ///
 /// 管理自动继续/重试的完整生命周期。通过以下方法与上层交互：
 ///
-/// - `on_turn_completed(outcome)`: Turn 完成时调用，启动计时器或停止
-/// - `timer_future()`: 获取计时器 Future，用于 `tokio::select!`
-/// - `on_timer_fired()`: 计时器触发后调用，解析提示词并返回动作
+/// - `on_turn_completed(outcome)`: Turn 完成时调用，记录待执行延迟
+/// - `take_pending_delay()`: 获取延迟秒数（一次性消费），用于外部启动计时器
+/// - `on_timer_fired_sync()`: 计时器触发后调用，更新内部状态
 /// - `cancel_pending()`: 取消正在等待的计时器（用户手动输入时）
 /// - `request_stop()`: 请求停止 ACX（用户命令 /acx-stop）
+/// - `is_waiting_to_send()`: 检查是否在等待发送状态
+/// - `config()`: 获取配置引用（用于外部解析提示词）
 ///
 /// ## 典型使用模式
 ///
 /// ```ignore
 /// let mut acx = AutoContinueManager::new(config)?;
 ///
-/// loop {
-///     // ... 等待 Turn 完成 ...
-///     acx.on_turn_completed(outcome);
+/// // Turn 完成后
+/// acx.on_turn_completed(outcome);
 ///
-///     tokio::select! {
-///         _ = async { acx.timer_future().unwrap() }, if acx.timer_future().is_some() => {
-///             match acx.on_timer_fired().await {
-///                 AcxAction::SendContinue(prompt) => { /* 发送到 CLI */ },
-///                 AcxAction::Stopped { reason } => break,
-///                 AcxAction::None => {},
-///             }
-///         }
-///         // ... 其他 select 分支 ...
-///     }
+/// // 检查是否需要启动计时器
+/// if let Some(delay) = acx.take_pending_delay() {
+///     // 在外部 bridge 层启动计时器任务
+///     tokio::spawn(async move {
+///         tokio::time::sleep(Duration::from_secs(delay)).await;
+///         // 发送 AcxAppEvent::TimerFired { text } 到 AppEvent 通道
+///     });
 /// }
 /// ```
 pub struct AutoContinueManager {
@@ -253,11 +265,12 @@ pub struct AutoContinueManager {
     /// 中断钩子管理器
     hook_manager: StopHookManager,
 
-    /// 计时器 Future（等待延迟结束后发送提示词）
+    /// 待执行的延迟秒数
     ///
-    /// 使用 `Pin<Box<Sleep>>` 以便在 `tokio::select!` 中 await。
-    /// `None` 表示当前没有活跃的计时器。
-    pending_timer: Option<Pin<Box<Sleep>>>,
+    /// 当 `on_turn_completed()` 决定需要继续时，记录延迟秒数。
+    /// 外部 bridge 层通过 `take_pending_delay()` 获取并启动计时器任务。
+    /// `None` 表示当前没有待启动的计时器。
+    pending_delay_secs: Option<u64>,
 
     /// 当前延迟秒数
     ///
@@ -307,7 +320,7 @@ impl AutoContinueManager {
             state: AcxState::Monitoring,
             round_count: 0,
             hook_manager,
-            pending_timer: None,
+            pending_delay_secs: None,
             current_delay: delay,
             consecutive_failures: 0,
         })
@@ -342,7 +355,7 @@ impl AutoContinueManager {
         // 1. 中断 → 立即停止
         if matches!(outcome, TurnOutcome::Interrupted) {
             self.state = AcxState::Stopped;
-            self.pending_timer = None;
+            self.pending_delay_secs = None;
             tracing::info!("[ACX] Turn 被中断，停止自动继续");
             return;
         }
@@ -351,7 +364,7 @@ impl AutoContinueManager {
         if let TurnOutcome::Failed { ref kind } = outcome {
             if !kind.is_retryable() {
                 self.state = AcxState::Stopped;
-                self.pending_timer = None;
+                self.pending_delay_secs = None;
                 tracing::info!("[ACX] 遇到不可重试错误 ({kind:?})，停止自动继续");
                 return;
             }
@@ -360,7 +373,7 @@ impl AutoContinueManager {
         // 3. 检查钩子
         if self.hook_manager.should_stop(self.round_count, &outcome) {
             self.state = AcxState::Stopped;
-            self.pending_timer = None;
+            self.pending_delay_secs = None;
             return;
         }
 
@@ -381,9 +394,8 @@ impl AutoContinueManager {
         };
         self.current_delay = delay;
 
-        // 5. 启动计时器
-        let sleep = tokio::time::sleep(std::time::Duration::from_secs(delay));
-        self.pending_timer = Some(Box::pin(sleep));
+        // 5. 记录待执行延迟（供外部 bridge 层查询）
+        self.pending_delay_secs = Some(delay);
         self.state = AcxState::WaitingToSend;
 
         // 6. 更新连续失败计数和轮次
@@ -407,53 +419,40 @@ impl AutoContinueManager {
         );
     }
 
-    /// 获取计时器 Future 的可变引用
+    /// 获取待执行的延迟秒数
     ///
-    /// 供上层在 `tokio::select!` 中使用。当返回 `Some` 时，
-    /// 上层应 await 该 Future；触发后调用 `on_timer_fired()`。
-    ///
-    /// # 返回值
-    /// - `Some(&mut Pin<Box<Sleep>>)`: 有活跃的计时器
-    /// - `None`: 没有活跃的计时器（状态为 Monitoring 或 Stopped）
-    pub fn timer_future(&mut self) -> Option<&mut Pin<Box<Sleep>>> {
-        self.pending_timer.as_mut()
+    /// 当 `on_turn_completed()` 决定需要继续时，此方法返回等待延迟。
+    /// 外部 bridge 层可以据此启动计时器任务。调用后清除延迟（一次性消费）。
+    pub fn take_pending_delay(&mut self) -> Option<u64> {
+        self.pending_delay_secs.take()
     }
 
-    /// 计时器触发后调用
+    /// 计时器触发后调用（同步版本）
     ///
-    /// 解析提示词并返回对应的 `AcxAction`：
-    /// - 解析成功：返回 `AcxAction::SendContinue(prompt)`
-    /// - 解析失败：记录警告，返回 `AcxAction::None`
-    ///
-    /// 调用后清除计时器，状态回到 `Monitoring`。
-    ///
-    /// # 返回值
-    /// 对应的动作
-    pub async fn on_timer_fired(&mut self) -> AcxAction {
-        // 清除计时器
-        self.pending_timer = None;
+    /// 仅更新内部状态（轮次、状态），不执行异步操作。
+    /// 提示词解析由外部 bridge 层在 spawned task 中完成。
+    pub fn on_timer_fired_sync(&mut self) {
         self.state = AcxState::Monitoring;
+        tracing::info!("[ACX] 计时器触发（第{}轮）", self.round_count);
+    }
 
-        // 解析提示词
-        match self.config.prompt.resolve().await {
-            Ok(prompt) => {
-                tracing::info!("[ACX] 发送继续提示词（第{}轮）", self.round_count);
-                AcxAction::SendContinue(prompt)
-            }
-            Err(e) => {
-                tracing::warn!("[ACX] 提示词解析失败: {e:#}");
-                AcxAction::None
-            }
-        }
+    /// 获取当前状态是否在等待发送
+    pub fn is_waiting_to_send(&self) -> bool {
+        self.state == AcxState::WaitingToSend
+    }
+
+    /// 获取配置引用
+    pub fn config(&self) -> &AcxConfig {
+        &self.config
     }
 
     /// 取消正在等待的计时器
     ///
     /// 当用户在计时器等待期间手动输入时调用。
-    /// 清除计时器，状态回到 `Monitoring`。
+    /// 清除延迟记录，状态回到 `Monitoring`。
     pub fn cancel_pending(&mut self) {
         if self.state == AcxState::WaitingToSend {
-            self.pending_timer = None;
+            self.pending_delay_secs = None;
             self.state = AcxState::Monitoring;
             tracing::debug!("[ACX] 计时器已取消（用户手动输入）");
         }
@@ -462,9 +461,9 @@ impl AutoContinueManager {
     /// 请求停止 ACX
     ///
     /// 由用户命令（如 `/acx-stop`）触发。
-    /// 取消计时器并设置状态为 `Stopped`。
+    /// 取消延迟记录并设置状态为 `Stopped`。
     pub fn request_stop(&mut self) {
-        self.pending_timer = None;
+        self.pending_delay_secs = None;
         self.state = AcxState::Stopped;
         tracing::info!("[ACX] 用户请求停止");
     }
@@ -546,22 +545,28 @@ mod tests {
     // 状态机基本测试
     // -----------------------------------------------------------------------
 
-    /// 测试成功 Turn 后启动计时器
-    #[tokio::test]
-    async fn test_completed_turn_starts_timer() {
+    /// 测试成功 Turn 后记录待执行延迟
+    #[test]
+    fn test_completed_turn_starts_timer() {
         let config = test_config();
         let mut acx = AutoContinueManager::new(config).unwrap();
 
         acx.on_turn_completed(TurnOutcome::Completed);
 
-        assert!(acx.timer_future().is_some());
+        assert!(acx.is_waiting_to_send());
         assert!(acx.is_active());
         assert_eq!(acx.state, AcxState::WaitingToSend);
+        // take_pending_delay 消费延迟值
+        let delay = acx.take_pending_delay();
+        assert!(delay.is_some());
+        assert_eq!(delay.unwrap(), 15); // 默认延迟秒数
+        // 再次调用应返回 None（已消费）
+        assert!(acx.take_pending_delay().is_none());
     }
 
     /// 测试成功 Turn 后重置连续失败计数
-    #[tokio::test]
-    async fn test_completed_resets_failures() {
+    #[test]
+    fn test_completed_resets_failures() {
         let config = test_config();
         let mut acx = AutoContinueManager::new(config).unwrap();
 
@@ -576,9 +581,9 @@ mod tests {
         assert_eq!(acx.consecutive_failures, 0);
     }
 
-    /// 测试可重试失败后启动计时器并增加失败计数
-    #[tokio::test]
-    async fn test_retryable_failure_starts_timer() {
+    /// 测试可重试失败后记录待执行延迟并增加失败计数
+    #[test]
+    fn test_retryable_failure_starts_timer() {
         let config = test_config();
         let mut acx = AutoContinueManager::new(config).unwrap();
 
@@ -586,14 +591,15 @@ mod tests {
             kind: AcxErrorKind::RateLimit,
         });
 
-        assert!(acx.timer_future().is_some());
+        assert!(acx.is_waiting_to_send());
+        assert!(acx.take_pending_delay().is_some());
         assert!(acx.is_active());
         assert_eq!(acx.consecutive_failures, 1);
     }
 
     /// 测试不可重试失败后停止
-    #[tokio::test]
-    async fn test_non_retryable_failure_stops() {
+    #[test]
+    fn test_non_retryable_failure_stops() {
         let config = test_config();
         let mut acx = AutoContinueManager::new(config).unwrap();
 
@@ -602,13 +608,13 @@ mod tests {
         });
 
         assert!(!acx.is_active());
-        assert!(acx.timer_future().is_none());
+        assert!(acx.take_pending_delay().is_none());
         assert_eq!(acx.state, AcxState::Stopped);
     }
 
     /// 测试中断后停止
-    #[tokio::test]
-    async fn test_interrupted_stops() {
+    #[test]
+    fn test_interrupted_stops() {
         let config = test_config();
         let mut acx = AutoContinueManager::new(config).unwrap();
 
@@ -623,8 +629,8 @@ mod tests {
     // -----------------------------------------------------------------------
 
     /// 测试指数退避：延迟应翻倍
-    #[tokio::test]
-    async fn test_exponential_backoff_doubles() {
+    #[test]
+    fn test_exponential_backoff_doubles() {
         let config = AcxConfig {
             delay_seconds: 10,
             ..test_config()
@@ -651,8 +657,8 @@ mod tests {
     }
 
     /// 测试指数退避：上限 300 秒
-    #[tokio::test]
-    async fn test_exponential_backoff_max_cap() {
+    #[test]
+    fn test_exponential_backoff_max_cap() {
         let config = AcxConfig {
             delay_seconds: 100,
             ..test_config()
@@ -679,8 +685,8 @@ mod tests {
     }
 
     /// 测试成功后退避延迟重置
-    #[tokio::test]
-    async fn test_backoff_resets_on_success() {
+    #[test]
+    fn test_backoff_resets_on_success() {
         let config = AcxConfig {
             delay_seconds: 10,
             ..test_config()
@@ -706,17 +712,17 @@ mod tests {
     // cancel_pending 测试
     // -----------------------------------------------------------------------
 
-    /// 测试 cancel_pending 取消计时器
-    #[tokio::test]
-    async fn test_cancel_pending() {
+    /// 测试 cancel_pending 取消延迟记录
+    #[test]
+    fn test_cancel_pending() {
         let config = test_config();
         let mut acx = AutoContinueManager::new(config).unwrap();
 
         acx.on_turn_completed(TurnOutcome::Completed);
-        assert!(acx.timer_future().is_some());
+        assert!(acx.is_waiting_to_send());
 
         acx.cancel_pending();
-        assert!(acx.timer_future().is_none());
+        assert!(acx.take_pending_delay().is_none());
         assert_eq!(acx.state, AcxState::Monitoring);
         assert!(acx.is_active());
     }
@@ -738,8 +744,8 @@ mod tests {
     // -----------------------------------------------------------------------
 
     /// 测试 request_stop 停止 ACX
-    #[tokio::test]
-    async fn test_request_stop() {
+    #[test]
+    fn test_request_stop() {
         let config = test_config();
         let mut acx = AutoContinueManager::new(config).unwrap();
 
@@ -747,13 +753,13 @@ mod tests {
         acx.request_stop();
 
         assert!(!acx.is_active());
-        assert!(acx.timer_future().is_none());
+        assert!(acx.take_pending_delay().is_none());
         assert_eq!(acx.state, AcxState::Stopped);
     }
 
     /// 测试停止后不再响应 on_turn_completed
-    #[tokio::test]
-    async fn test_stopped_ignores_turn() {
+    #[test]
+    fn test_stopped_ignores_turn() {
         let config = test_config();
         let mut acx = AutoContinueManager::new(config).unwrap();
 
@@ -761,16 +767,16 @@ mod tests {
         acx.on_turn_completed(TurnOutcome::Completed);
 
         assert!(!acx.is_active());
-        assert!(acx.timer_future().is_none());
+        assert!(acx.take_pending_delay().is_none());
     }
 
     // -----------------------------------------------------------------------
-    // on_timer_fired 测试
+    // on_timer_fired_sync 测试
     // -----------------------------------------------------------------------
 
-    /// 测试 on_timer_fired 返回 SendContinue
-    #[tokio::test]
-    async fn test_on_timer_fired_send_continue() {
+    /// 测试 on_timer_fired_sync 更新状态到 Monitoring
+    #[test]
+    fn test_on_timer_fired_sync() {
         let config = AcxConfig {
             prompt: PromptSource::Static("test prompt".to_string()),
             delay_seconds: 0,
@@ -779,20 +785,18 @@ mod tests {
         let mut acx = AutoContinueManager::new(config).unwrap();
 
         acx.on_turn_completed(TurnOutcome::Completed);
+        assert!(acx.is_waiting_to_send());
 
-        // 等待计时器触发
-        if let Some(timer) = acx.timer_future() {
-            timer.await;
-        }
+        // 消费延迟值
+        let delay = acx.take_pending_delay();
+        assert!(delay.is_some());
 
-        let action = acx.on_timer_fired().await;
-        match action {
-            AcxAction::SendContinue(prompt) => assert_eq!(prompt, "test prompt"),
-            _ => panic!("应返回 SendContinue"),
-        }
+        // 模拟计时器触发
+        acx.on_timer_fired_sync();
 
         // 状态应回到 Monitoring
         assert_eq!(acx.state, AcxState::Monitoring);
+        assert!(!acx.is_waiting_to_send());
     }
 
     // -----------------------------------------------------------------------
@@ -800,8 +804,8 @@ mod tests {
     // -----------------------------------------------------------------------
 
     /// 测试 status_text 在各状态下的输出
-    #[tokio::test]
-    async fn test_status_text() {
+    #[test]
+    fn test_status_text() {
         let config = test_config();
         let mut acx = AutoContinueManager::new(config).unwrap();
 
@@ -826,8 +830,8 @@ mod tests {
     // -----------------------------------------------------------------------
 
     /// 测试钩子触发停止
-    #[tokio::test]
-    async fn test_hook_triggers_stop() {
+    #[test]
+    fn test_hook_triggers_stop() {
         let config = AcxConfig {
             stop_whens: vec!["<round=2>".to_string()],
             ..test_config()
@@ -852,8 +856,8 @@ mod tests {
     // -----------------------------------------------------------------------
 
     /// 测试 enabled=false 时不启动计时器
-    #[tokio::test]
-    async fn test_disabled_mode() {
+    #[test]
+    fn test_disabled_mode() {
         let config = AcxConfig {
             enabled: false,
             ..test_config()
@@ -861,7 +865,7 @@ mod tests {
         let mut acx = AutoContinueManager::new(config).unwrap();
 
         acx.on_turn_completed(TurnOutcome::Completed);
-        assert!(acx.timer_future().is_none());
+        assert!(acx.take_pending_delay().is_none());
         assert_eq!(acx.state, AcxState::Monitoring);
     }
 }

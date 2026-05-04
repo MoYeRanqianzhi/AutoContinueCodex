@@ -883,14 +883,8 @@ pub(crate) enum AppEvent {
         action: String,
     },
 
-    // [ACX]
-    /// 用户请求停止 AutoContinue 自动继续
-    AcxStopRequested,
-
-    /// ACX 自动继续：提交继续提示词（不改变当前协作模式）
-    AcxSubmitContinue {
-        text: String,
-    },
+    // [ACX] AutoContinue 事件（路由逻辑在 acx_integration.rs 中）
+    AcxEvent(codex_auto_continue::AcxAppEvent),
     // [/ACX]
 }
 

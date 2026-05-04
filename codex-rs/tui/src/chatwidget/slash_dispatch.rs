@@ -445,7 +445,9 @@ impl ChatWidget {
             }
             // [ACX]
             SlashCommand::AcxStop => {
-                self.app_event_tx.send(AppEvent::AcxStopRequested);
+                self.app_event_tx.send(AppEvent::AcxEvent(
+                    codex_auto_continue::AcxAppEvent::StopRequested,
+                ));
             }
             // [/ACX]
         }

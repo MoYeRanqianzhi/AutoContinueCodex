@@ -77,8 +77,7 @@ use crate::tui::TuiEvent;
 use crate::update_action::UpdateAction;
 use crate::version::CODEX_CLI_VERSION;
 use codex_ansi_escape::ansi_escape_line;
-// [ACX]
-use codex_auto_continue::{AutoContinueManager, AcxAction};
+// [ACX] AcxAppEvent 在 acx_integration.rs 和 app_event.rs 中使用
 // [/ACX]
 use codex_app_server_client::AppServerRequestHandle;
 use codex_app_server_client::TypedRequestError;
@@ -506,8 +505,8 @@ pub(crate) struct App {
     // cwd contexts.
     pending_plugin_enabled_writes: HashMap<String, Option<bool>>,
     // [ACX]
-    /// AutoContinue 管理器，负责自动继续/重试逻辑
-    pub(crate) acx_manager: Option<AutoContinueManager>,
+    /// AutoContinue 桥接层，负责自动继续/重试逻辑
+    pub(crate) acx_manager: Option<acx_integration::AcxBridge>,
     // [/ACX]
     // Serialize hook enablement writes per hook so stale completions cannot
     // persist an older toggle after a newer one.
@@ -899,12 +898,12 @@ See the Codex keymap documentation for supported actions and examples."
             acx_manager: None, // [ACX]
         };
 
-        // [ACX] 根据 CLI 参数初始化 AutoContinue 管理器
+        // [ACX] 根据 CLI 参数初始化 AutoContinue 桥接层
         if let Some(acx_cfg) = acx_config {
-            match AutoContinueManager::new(acx_cfg) {
-                Ok(mgr) => {
+            match acx_integration::AcxBridge::new(acx_cfg, app.app_event_tx.clone()) {
+                Ok(bridge) => {
                     tracing::info!("[ACX] AutoContinue 已启用");
-                    app.acx_manager = Some(mgr);
+                    app.acx_manager = Some(bridge);
                 }
                 Err(e) => {
                     tracing::error!("[ACX] 初始化失败: {e}");
@@ -1015,8 +1014,8 @@ See the Codex keymap documentation for supported actions and examples."
                     event = tui_events.next() => {
                         if let Some(event) = event {
                             // [ACX] 用户输入时取消待执行的自动继续计时器
-                            if let Some(ref mut mgr) = app.acx_manager {
-                                mgr.cancel_pending();
+                            if let Some(ref mut bridge) = app.acx_manager {
+                                bridge.cancel_pending();
                             }
                             // [/ACX]
                             match app.handle_tui_event(tui, &mut app_server, event).await {
@@ -1038,33 +1037,7 @@ See the Codex keymap documentation for supported actions and examples."
                         }
                         AppRunControl::Continue
                     }
-                    // [ACX] 自动继续计时器
-                    _ = async {
-                        if let Some(ref mut mgr) = app.acx_manager {
-                            if let Some(timer) = mgr.timer_future() {
-                                timer.await
-                            } else {
-                                std::future::pending::<()>().await
-                            }
-                        } else {
-                            std::future::pending::<()>().await
-                        }
-                    } => {
-                        if let Some(ref mut mgr) = app.acx_manager {
-                            match mgr.on_timer_fired().await {
-                                AcxAction::SendContinue(prompt) => {
-                                    app.app_event_tx.send(AppEvent::AcxSubmitContinue {
-                                        text: prompt,
-                                    });
-                                }
-                                AcxAction::Stopped { reason } => {
-                                    tracing::info!("[ACX] 停止: {reason}");
-                                }
-                                AcxAction::None => {}
-                            }
-                        }
-                        AppRunControl::Continue
-                    }
+                    // [ACX] 计时器逻辑已移至 AcxBridge (acx_integration.rs)
                     // [/ACX]
                 };
                 if App::should_stop_waiting_for_initial_session(

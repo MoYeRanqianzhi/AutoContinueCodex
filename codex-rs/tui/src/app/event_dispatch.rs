@@ -1935,20 +1935,13 @@ impl App {
             AppEvent::KeymapCleared { context, action } => {
                 self.apply_keymap_clear(context, action).await;
             }
-            // [ACX] 处理用户请求停止 AutoContinue
-            AppEvent::AcxStopRequested => {
-                if let Some(ref mut mgr) = self.acx_manager {
-                    mgr.request_stop();
-                    self.chat_widget.add_info_message(
-                        "[ACX] 自动继续已停止，当前轮完成后不再继续".to_string(),
-                        None,
-                    );
-                }
-            }
-            // [ACX] 提交自动继续提示词（不改变当前协作模式）
-            AppEvent::AcxSubmitContinue { text } => {
-                self.chat_widget
-                    .submit_user_message_as_plain_user_turn(text.into());
+            // [ACX]
+            AppEvent::AcxEvent(evt) => {
+                acx_integration::dispatch_acx_event(
+                    &mut self.acx_manager,
+                    &mut self.chat_widget,
+                    evt,
+                );
             }
             // [/ACX]
         }
