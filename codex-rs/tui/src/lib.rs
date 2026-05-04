@@ -1418,17 +1418,25 @@ async fn run_ratatui_app(
         && WindowsSandboxLevel::from_config(&config) == WindowsSandboxLevel::Disabled;
 
     // [ACX] acx 二进制始终启用自动继续，从 CLI 参数构建 AcxConfig
+    // 提示词来源优先级: pipe > io > file > static
     let acx_config = {
         let prompt_source = if let Some(ref pipe_cmd) = cli.acx_continue_prompt_pipe {
+            // 管道命令模式：每次执行命令获取提示词
             codex_auto_continue::PromptSource::Pipe {
                 command: pipe_cmd.clone(),
                 format: None,
             }
         } else if let Some(ref io_path) = cli.acx_continue_prompt_io {
+            // IO 文件模式：每次动态读取文件内容
             codex_auto_continue::PromptSource::Io(std::path::PathBuf::from(io_path))
+        } else if let Some(ref file_path) = cli.acx_continue_prompt_file {
+            // 文件模式：启动时一次性读取文件内容
+            codex_auto_continue::PromptSource::File(std::path::PathBuf::from(file_path))
         } else if let Some(ref static_prompt) = cli.acx_continue_prompt {
+            // 静态文本模式：直接使用用户提供的字符串
             codex_auto_continue::PromptSource::Static(static_prompt.clone())
         } else {
+            // 默认提示词
             codex_auto_continue::PromptSource::Static("Continue".to_string())
         };
         Some(codex_auto_continue::AcxConfig {

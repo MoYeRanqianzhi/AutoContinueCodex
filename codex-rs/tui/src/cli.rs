@@ -71,29 +71,44 @@ pub struct Cli {
 
     // [ACX] AutoContinue 参数（AC 原版风格） ───────────────
     // acx 二进制始终启用自动继续，不需要 --acx 开关
+    //
+    // 短参数兼容说明：
+    // AC 原版使用多字符短参数（如 -cp, -cpf），但 clap 的 `short` 只接受单个字符。
+    // 因此使用 `alias` 实现 AC 兼容：用户可以写 --cp 或 --continue-prompt，效果相同。
 
     /// AutoContinue 继续提示词（静态字符串）
-    #[arg(long = "continue-prompt", default_value = "Continue")]
+    /// AC 兼容短形式: --cp
+    #[arg(long = "continue-prompt", alias = "cp", default_value = "Continue")]
     pub acx_continue_prompt: Option<String>,
 
-    /// AutoContinue 继续提示词 IO 文件路径（动态读取）
-    #[arg(long = "continue-prompt-io")]
+    /// AutoContinue 继续提示词文件路径（启动时一次性读取）
+    /// AC 兼容短形式: --cpf
+    #[arg(long = "continue-prompt-file", alias = "cpf")]
+    pub acx_continue_prompt_file: Option<String>,
+
+    /// AutoContinue 继续提示词 IO 文件路径（每次动态读取）
+    /// AC 兼容短形式: --cpio
+    #[arg(long = "continue-prompt-io", alias = "cpio")]
     pub acx_continue_prompt_io: Option<String>,
 
     /// AutoContinue 继续提示词管道命令
-    #[arg(long = "continue-prompt-pipe")]
+    /// AC 兼容短形式: --cpp
+    #[arg(long = "continue-prompt-pipe", alias = "cpp")]
     pub acx_continue_prompt_pipe: Option<String>,
 
     /// AutoContinue 基础等待秒数，静默超时后等待多久再发送继续提示词
-    #[arg(long = "sleep-time", default_value_t = 15)]
+    /// AC 兼容短形式: --st
+    #[arg(long = "sleep-time", alias = "st", default_value_t = 15)]
     pub acx_sleep_time: u64,
 
     /// AutoContinue 停止条件关键词列表（可重复）
-    #[arg(long = "stop-when")]
+    /// AC 兼容短形式: --sw
+    #[arg(long = "stop-when", alias = "sw")]
     pub acx_stop_when: Vec<String>,
 
     /// AutoContinue 自定义停止命令钩子（可重复）
-    #[arg(long = "stop-hook")]
+    /// AC 兼容短形式: --sh
+    #[arg(long = "stop-hook", alias = "sh")]
     pub acx_stop_hook: Vec<String>,
     // [/ACX] ────────────────────────────────────────────────
 

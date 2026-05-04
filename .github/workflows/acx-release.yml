@@ -219,7 +219,10 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Reorganize artifacts to match stage_npm_packages.py expectations
+          # [ACX] 直接调用 build_npm_package.py（不使用 stage_npm_packages.py，
+          # 因为后者依赖 gh CLI 下载 artifacts，而我们已通过 actions/download-artifact 获取）
+
+          # 整理 artifacts 目录结构
           mkdir -p build-artifacts
           for dir in artifacts/binaries-*; do
             target=$(basename "$dir" | sed 's/binaries-//')
@@ -227,11 +230,35 @@ jobs:
             cp -r "$dir"/* "build-artifacts/${target}/"
           done
 
-          python3 ./scripts/stage_npm_packages.py \
-            --version "$VERSION" \
-            --artifacts-dir build-artifacts \
-            --output-dir dist/npm \
-            --packages codex
+          mkdir -p dist/npm
+
+          # 打包主 codex 包（无原生组件，只含 JS 入口）
+          python3 codex-cli/scripts/build_npm_package.py \
+            --package codex \
+            --release-version "$VERSION" \
+            --pack-output "dist/npm/acx-npm-${VERSION}.tgz"
+
+          # 打包各平台包（含原生二进制）
+          for dir in build-artifacts/*; do
+            target=$(basename "$dir")
+            case "$target" in
+              x86_64-unknown-linux-musl)   pkg="codex-linux-x64" ;;
+              aarch64-unknown-linux-musl)  pkg="codex-linux-arm64" ;;
+              aarch64-apple-darwin)        pkg="codex-darwin-arm64" ;;
+              x86_64-apple-darwin)         pkg="codex-darwin-x64" ;;
+              x86_64-pc-windows-msvc)      pkg="codex-win32-x64" ;;
+              aarch64-pc-windows-msvc)     pkg="codex-win32-arm64" ;;
+              *) echo "Unknown target: $target, skipping"; continue ;;
+            esac
+            python3 codex-cli/scripts/build_npm_package.py \
+              --package "$pkg" \
+              --release-version "$VERSION" \
+              --vendor-src build-artifacts \
+              --pack-output "dist/npm/acx-npm-${pkg#codex-}-${VERSION}.tgz"
+          done
+
+          echo "Packaged tarballs:"
+          ls -la dist/npm/
 
       - name: Publish to npm
         env:

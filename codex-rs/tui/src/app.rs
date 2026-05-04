@@ -77,8 +77,6 @@ use crate::tui::TuiEvent;
 use crate::update_action::UpdateAction;
 use crate::version::CODEX_CLI_VERSION;
 use codex_ansi_escape::ansi_escape_line;
-// [ACX] AcxAppEvent 在 acx_integration.rs 和 app_event.rs 中使用
-// [/ACX]
 use codex_app_server_client::AppServerRequestHandle;
 use codex_app_server_client::TypedRequestError;
 use codex_app_server_protocol::AddCreditsNudgeCreditType;
@@ -1037,8 +1035,6 @@ See the Codex keymap documentation for supported actions and examples."
                         }
                         AppRunControl::Continue
                     }
-                    // [ACX] 计时器逻辑已移至 AcxBridge (acx_integration.rs)
-                    // [/ACX]
                 };
                 if App::should_stop_waiting_for_initial_session(
                     waiting_for_initial_session_configured,
