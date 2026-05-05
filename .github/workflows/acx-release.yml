@@ -345,7 +345,7 @@ jobs:
           set -euo pipefail
           for tarball in dist/npm/*.tgz; do
             echo "Publishing $(basename "$tarball")..."
-            publish_output="$(npm publish "${tarball}" --access public 2>&1)" || {
+            publish_output="$(npm publish "${tarball}" --access public --tag latest 2>&1)" || {
               if grep -qiE "previously published|cannot publish over|version already exists" <<< "${publish_output}"; then
                 echo "Already published, skipping"
               else
