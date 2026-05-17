@@ -341,9 +341,23 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
+          # 主包文件名格式: acx-npm-${VERSION}.tgz
+          # 平台包文件名格式: acx-npm-<platform>-${VERSION}.tgz
+          # 平台包使用 prerelease 版本号 (如 0.128.0-darwin-arm64)，
+          # 必须用平台 tag 发布以避免覆盖 latest
+
+          main_tarball="dist/npm/acx-npm-${VERSION}.tgz"
+
+          # 先发布平台包（使用平台 tag，不覆盖 latest）
           for tarball in dist/npm/*.tgz; do
+            if [[ "$tarball" == "$main_tarball" ]]; then
+              continue
+            fi
             echo "Publishing $(basename "$tarball")..."
-            publish_output="$(npm publish "${tarball}" --access public --tag latest 2>&1)" || {
+            # 从文件名提取平台 tag: acx-npm-<tag>-${VERSION}.tgz → <tag>
+            tag=$(basename "$tarball" | sed -E "s/^acx-npm-(.+)-${VERSION}\.tgz$/\1/")
+            publish_output="$(npm publish "${tarball}" --access public --tag "${tag}" 2>&1)" || {
               if grep -qiE "previously published|cannot publish over|version already exists" <<< "${publish_output}"; then
                 echo "Already published, skipping"
               else
@@ -353,6 +367,22 @@ jobs:
             }
             echo "${publish_output}"
           done
+
+          # 最后发布主包（使用 latest tag）
+          if [[ -f "$main_tarball" ]]; then
+            echo "Publishing main package $(basename "$main_tarball")..."
+            publish_output="$(npm publish "${main_tarball}" --access public --tag latest 2>&1)" || {
+              if grep -qiE "previously published|cannot publish over|version already exists" <<< "${publish_output}"; then
+                echo "Already published, skipping"
+                # 即使主包已发布，确保 latest 指向正确版本
+                npm dist-tag add "@moyeranqianzhi/acx@${VERSION}" latest || true
+              else
+                echo "${publish_output}"
+                exit 1
+              fi
+            }
+            echo "${publish_output}"
+          fi
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe # v2
